@@ -350,7 +350,8 @@ def call_tool(name, arguments):
 
 
 def send(message):
-    sys.stdout.write(json.dumps(message, ensure_ascii=False) + "\n")
+    # MCP stdio is UTF-8 regardless of the Windows console code page.
+    sys.stdout.write(json.dumps(message, ensure_ascii=True) + "\n")
     sys.stdout.flush()
 
 
@@ -395,6 +396,15 @@ def _handle_request(request):
 
 
 def main():
+    # Codex communicates over pipes, but Python on Windows may still select
+    # the active console code page (for example GBK). Decode MCP input as UTF-8
+    # and force UTF-8 output so JSON-RPC frames remain portable.
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8", errors="strict")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="strict")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     for line in sys.stdin:
         request = {}
         try:

@@ -15,6 +15,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 Claude 的 plan/review/diagnose 工具使用异步请求：首次调用立即返回 `operation_id`，之后用同一工具轮询到 `completed` 或 `failed`。轮询最多等待 20 秒；不要重复提交正在运行的原始请求。这样可避开 Codex MCP 单次调用约 60 秒的等待限制，同时保留桥接自身的 150 秒总请求预算。
 
+桥接会强制 MCP stdio 使用 UTF-8，避免 Windows 系统代码页（如 GBK）导致中文回包无法被 Codex 解码。
+
 卸载本包注册的 MCP：
 
 ```powershell
