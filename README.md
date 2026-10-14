@@ -17,7 +17,7 @@ Claude 的 plan/review/diagnose 工具使用异步请求：首次调用立即返
 
 桥接会强制 MCP stdio 使用 UTF-8，避免 Windows 系统代码页（如 GBK）导致中文回包无法被 Codex 解码。
 
-首次调用必须传入 `task` 和 `project_root`；`effort` 默认 `medium`，可按任务规则指定 `high` 或 `max`。`context` 可选，用于补充需求、约束或现象。Codex 负责给出准确的项目绝对根路径，桥接以该目录启动本机 Claude Code CLI。Claude 可在此项目目录内使用 `Read`、`Glob`、`Grep` 自主查看相关文件，不再依赖 GPT 把源码摘要复制到 context。CLI 使用 restricted 模式，不提供编辑或命令执行能力，并拒绝读取常见密钥文件；桥接只接受存在的目录，不根据自身当前目录猜路径，也不授权仓库外文件。Claude 应在结果中列出实际查看的关键文件、事实、假设和证据缺口。
+首次调用必须传入 `task` 和 `project_root`；`effort` 默认 `medium`，可按任务规则指定 `high` 或 `max`。`context` 可选，用于补充需求、约束或现象。Codex 负责给出准确的项目绝对根路径，桥接以该目录启动本机 Claude Code CLI。Claude 可在此项目目录内使用 `Read`、`Glob`、`Grep` 自主查看相关文件，不再依赖 GPT 把源码摘要复制进 context。CLI 使用 safe mode 禁用自定义 hooks、MCP 和其他扩展，只开放只读文件工具并使用 plan 权限；关闭权限提示后，工作目录外需审批的文件读取会被自动拒绝。桥接另设常见密钥和凭据文件拒绝规则。桥接以 `project_root` 作为当前工作目录，复用 Claude Code 当前用户登录态。避免使用 `--bare`（会禁用 OAuth/keychain）和 `--restricted`（在本机 OAuth 配置下会让非交互调用返回未登录）。Claude 应在结果中列出实际查看的关键文件、事实、假设和证据缺口。
 
 卸载本包注册的 MCP：
 

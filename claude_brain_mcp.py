@@ -116,9 +116,8 @@ def _build_claude_command(claude_exe, name, effort, prompt, project_root):
     return [
         claude_exe,
         "-p",
-        "--bare",
         "--no-session-persistence",
-        "--restricted",
+        "--safe-mode",
         "--tools",
         "Read,Glob,Grep",
         "--disallowedTools",
@@ -216,6 +215,50 @@ def _retryable_failure(payload, detail):
     return any(marker in message for marker in transient_markers)
 
 
+def _safe_failure_message(payload, detail, returncode):
+    """Classify CLI failures without returning raw stderr or provider data."""
+    status = payload.get("api_error_status") if payload else None
+    if status:
+        return f"Claude 请求失败（API 状态 {status}）"
+
+    message = (detail or "").lower()
+    if any(marker in message for marker in (
+        "not logged in",
+        "please run /login",
+        "oauth token",
+        "no authentication",
+        "authentication required",
+    )):
+        return "Claude Code 子进程无法使用当前登录凭据"
+    if any(marker in message for marker in (
+        "authentication",
+        "unauthorized",
+        "invalid api key",
+        "api key is invalid",
+    )):
+        return "Claude 认证失败"
+    if any(marker in message for marker in (
+        "insufficient balance",
+        "credit balance",
+        "quota exceeded",
+        "billing",
+    )):
+        return "Claude 服务报告余额或额度不足"
+    if any(marker in message for marker in ("permission denied", "forbidden", "not allowed")):
+        return "Claude 调用被权限策略拒绝"
+    if any(marker in message for marker in (
+        "unknown option",
+        "unrecognized option",
+        "invalid option",
+        "unknown argument",
+        "unexpected argument",
+    )):
+        return "Claude Code 拒绝了启动参数"
+    if _retryable_failure(payload, detail):
+        return "Claude 请求遇到暂时性网络或服务端错误"
+    return f"Claude Code 退出码 {returncode}，CLI 未提供可分类的错误原因"
+
+
 def _run_claude(name, arguments):
     task = str(arguments.get("task", "")).strip()
     context = str(arguments.get("context", "")).strip()
@@ -274,20 +317,8 @@ def _run_claude(name, arguments):
             payload = _json_payload(stdout)
             if proc.returncode != 0 or (payload and payload.get("is_error")):
                 detail = " ".join((stderr or "", stdout or ""))
-                status = payload.get("api_error_status") if payload else None
                 retryable = _retryable_failure(payload, detail)
-                if status:
-                    failure = f"Claude request failed (API status {status})"
-                elif retryable:
-                    failure = "Claude request failed with a transient network or server error"
-                elif any(marker in detail.lower() for marker in ("authentication", "unauthorized", "invalid api key")):
-                    failure = "Claude authentication failed"
-                elif any(marker in detail.lower() for marker in ("permission denied", "forbidden")):
-                    failure = "Claude request was rejected by permission policy"
-                elif any(marker in detail.lower() for marker in ("insufficient balance", "credit balance", "quota exceeded", "billing")):
-                    failure = "Claude provider reported a billing or quota limit"
-                else:
-                    failure = f"Claude Code exited with status {proc.returncode}"
+                failure = _safe_failure_message(payload, detail, proc.returncode)
                 last_error = ClaudeCallError(
                     failure,
                     retryable=retryable,
@@ -490,7 +521,7 @@ def _handle_request(request):
                 {"required": ["operation_id"], "not": {"required": ["task", "project_root", "context", "effort"]}},
             ],
         }
-        return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": [{"name": n, "description": f"Use Claude Opus 5.5 for {n}. The initial call requires task and the exact project_root. Claude runs in that project and can inspect repository files with restricted read-only Read/Glob/Grep tools; it cannot edit files or execute commands. context is optional supplemental task information. The call returns an operation_id immediately; poll this tool with operation_id and wait_seconds (0-20) until completed or failed. Never resubmit a running operation.", "inputSchema": common_schema} for n in ["plan", "review", "diagnose"]]}}
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": [{"name": n, "description": f"Use Claude Opus 5.5 for {n}. The initial call requires task and the exact project_root. Claude runs in that project in safe mode with only read-only Read/Glob/Grep tools and plan permission; it cannot edit files or execute commands. context is optional supplemental task information. The call returns an operation_id immediately; poll this tool with operation_id and wait_seconds (0-20) until completed or failed. Never resubmit a running operation.", "inputSchema": common_schema} for n in ["plan", "review", "diagnose"]]}}
     if method == "tools/call":
         params = request.get("params", {})
         name = params.get("name", "")

@@ -35,14 +35,16 @@ class ProjectAccessContractTests(unittest.TestCase):
         self.assertIn("需要补充证据", prompt)
         self.assertIn("不得修改文件、运行命令", prompt)
 
-    def test_command_uses_restricted_read_only_project_tools(self):
+    def test_command_uses_safe_mode_read_only_project_tools(self):
         command = claude_brain_mcp._build_claude_command(
             "claude", "plan", "high", "prompt", self.project_root
         )
         self.assertEqual(command[command.index("--tools") + 1], "Read,Glob,Grep")
-        self.assertIn("--restricted", command)
+        self.assertIn("--safe-mode", command)
+        self.assertNotIn("--restricted", command)
         self.assertEqual(command[command.index("--permission-mode") + 1], "plan")
         self.assertEqual(command[command.index("--add-dir") + 1], self.project_root)
+        self.assertNotIn("--bare", command)
         self.assertNotIn("Edit", command[command.index("--tools") + 1])
         self.assertNotIn("Bash", command[command.index("--tools") + 1])
         self.assertNotIn("Write", command[command.index("--tools") + 1])
@@ -119,6 +121,20 @@ class ProjectAccessContractTests(unittest.TestCase):
                     "wait_seconds": 0,
                 },
             )
+
+    def test_failure_message_classifies_oauth_failure_without_raw_output(self):
+        message = claude_brain_mcp._safe_failure_message(
+            None,
+            "Not logged in · Please run /login\nAuthorization: Bearer do-not-print-this",
+            1,
+        )
+        self.assertIn("无法使用当前登录凭据", message)
+        self.assertNotIn("do-not-print-this", message)
+
+    def test_failure_message_keeps_unclassified_exit_code_useful(self):
+        message = claude_brain_mcp._safe_failure_message(None, "opaque failure detail", 7)
+        self.assertIn("退出码 7", message)
+        self.assertNotIn("opaque failure detail", message)
 
 
 if __name__ == "__main__":
