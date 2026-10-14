@@ -13,6 +13,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 安装器会自动定位当前用户的 `CODEX_HOME`，备份已有 `AGENTS.md` 和 `config.toml`，安装 `claude_brain` 桥接并注册为全局 Codex MCP。它不会复制 API Key，也不会覆盖现有模型供应商配置；Claude Code 的 API 地址和凭据需要在新电脑单独配置。安装结束后重启 Codex 或新建会话。
 
+Claude 的 plan/review/diagnose 工具使用异步请求：首次调用立即返回 `operation_id`，之后用同一工具轮询到 `completed` 或 `failed`。轮询最多等待 20 秒；不要重复提交正在运行的原始请求。这样可避开 Codex MCP 单次调用约 60 秒的等待限制，同时保留桥接自身的 150 秒总请求预算。
+
 卸载本包注册的 MCP：
 
 ```powershell
