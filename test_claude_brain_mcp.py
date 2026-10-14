@@ -1,7 +1,8 @@
 import os
+import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import claude_brain_mcp
 
@@ -135,6 +136,65 @@ class ProjectAccessContractTests(unittest.TestCase):
         message = claude_brain_mcp._safe_failure_message(None, "opaque failure detail", 7)
         self.assertIn("退出码 7", message)
         self.assertNotIn("opaque failure detail", message)
+
+    def test_local_process_timeout_does_not_retry_ambiguous_request(self):
+        process = Mock()
+        process.wait.side_effect = subprocess.TimeoutExpired("claude", 1)
+        process.returncode = -1
+
+        with (
+            patch.object(claude_brain_mcp.os.path, "exists", return_value=True),
+            patch.object(claude_brain_mcp.subprocess, "Popen", return_value=process) as popen,
+            patch.object(claude_brain_mcp, "_terminate_process_tree"),
+            patch.object(claude_brain_mcp, "REQUEST_TIMEOUT_SECONDS", 1),
+            patch.object(claude_brain_mcp, "TOTAL_TIMEOUT_SECONDS", 10),
+            patch.object(claude_brain_mcp, "PROCESS_TERMINATION_RESERVE_SECONDS", 1),
+        ):
+            with self.assertRaisesRegex(
+                claude_brain_mcp.ClaudeCallError,
+                "未自动重试",
+            ):
+                claude_brain_mcp._run_claude(
+                    "plan",
+                    {"task": "测试超时", "project_root": self.project_root},
+                )
+
+        popen.assert_called_once()
+
+    def test_bridge_timeout_budgets_allow_one_long_request(self):
+        self.assertEqual(claude_brain_mcp.REQUEST_TIMEOUT_SECONDS, 600)
+        self.assertEqual(claude_brain_mcp.TOTAL_TIMEOUT_SECONDS, 900)
+        self.assertGreater(
+            claude_brain_mcp.TOTAL_TIMEOUT_SECONDS,
+            claude_brain_mcp.REQUEST_TIMEOUT_SECONDS
+            + claude_brain_mcp.PROCESS_TERMINATION_RESERVE_SECONDS,
+        )
+
+    def test_explicit_transient_service_error_retries_once(self):
+        responses = [
+            '{"is_error":true,"api_error_status":503}\n',
+            '{"result":"完整方案","model":"claude-opus-5-5","stop_reason":"end_turn"}\n',
+        ]
+
+        def start_process(*args, **kwargs):
+            kwargs["stdout"].write(responses.pop(0).encode("utf-8"))
+            process = Mock()
+            process.wait.return_value = 0
+            process.returncode = 0
+            return process
+
+        with (
+            patch.object(claude_brain_mcp.os.path, "exists", return_value=True),
+            patch.object(claude_brain_mcp.subprocess, "Popen", side_effect=start_process) as popen,
+            patch.object(claude_brain_mcp.time, "sleep"),
+        ):
+            result = claude_brain_mcp._run_claude(
+                "plan",
+                {"task": "测试短暂错误重试", "project_root": self.project_root},
+            )
+
+        self.assertEqual(popen.call_count, 2)
+        self.assertEqual(result["structuredContent"]["result"], "完整方案")
 
 
 if __name__ == "__main__":

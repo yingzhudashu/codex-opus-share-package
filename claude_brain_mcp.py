@@ -10,8 +10,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 
-REQUEST_TIMEOUT_SECONDS = 90
-TOTAL_TIMEOUT_SECONDS = 150
+REQUEST_TIMEOUT_SECONDS = 600
+TOTAL_TIMEOUT_SECONDS = 900
 MAX_RETRIES = 1
 MAX_CONCURRENT_CALLS = 4
 MAX_POLL_SECONDS = 20
@@ -309,9 +309,11 @@ def _run_claude(name, arguments):
             stderr = stderr_file.read().decode("utf-8", errors="replace")
 
         if timed_out:
+            # A local process wait timeout is ambiguous: the upstream request
+            # may still be running, so never replay it automatically.
             last_error = ClaudeCallError(
-                f"Claude request timed out after {int(timeout)} seconds",
-                retryable=True,
+                f"Claude 请求等待 {int(timeout)} 秒超时；未自动重试，避免上游仍在处理时重复创建请求。",
+                retryable=False,
             )
         else:
             payload = _json_payload(stdout)

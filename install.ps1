@@ -6,7 +6,6 @@ $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USER
 $claudeHome = Join-Path $env:USERPROFILE '.claude'
 $toolsDir = Join-Path $codexHome 'tools'
 $globalAgents = Join-Path $codexHome 'AGENTS.md'
-$configToml = Join-Path $codexHome 'config.toml'
 $bridgeSource = Join-Path $packageRoot 'claude_brain_mcp.py'
 $bridgeTarget = Join-Path $toolsDir 'claude_brain_mcp.py'
 $stamp = '# BEGIN codex-opus-share-package'
@@ -15,7 +14,7 @@ $endStamp = '# END codex-opus-share-package'
 New-Item -ItemType Directory -Force -Path $codexHome, $toolsDir | Out-Null
 $backupDir = Join-Path $codexHome ('backups\opus-share-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
-foreach ($path in @($globalAgents, $configToml)) { if (Test-Path $path) { Copy-Item $path $backupDir } }
+if (Test-Path $globalAgents) { Copy-Item $globalAgents $backupDir }
 
 $rules = Get-Content (Join-Path $packageRoot 'AGENTS.md') -Raw
 $rules = $rules -replace '(?s)^.*?<!-- project-doc -->\r?\n', ''
