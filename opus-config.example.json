@@ -1,0 +1,21 @@
+{
+  "template_version": 2,
+  "base_url": "<FILL_YOUR_HTTPS_API_BASE_URL>",
+  "api_protocol": "anthropic_messages",
+  "model": "claude-opus-5-5",
+  "api_key_env": "OPUS_API_KEY",
+  "auth_header": "x-api-key",
+  "auth_prefix": "",
+  "anthropic_version": "2023-06-01",
+  "effort": {
+    "default": "medium",
+    "standard": "high",
+    "complex": "max",
+    "aesthetic": "max"
+  },
+  "max_output_tokens": 32768,
+  "request_timeout_seconds": 90,
+  "total_timeout_seconds": 150,
+  "max_transient_retries": 1,
+  "allow_live_verification": false
+}

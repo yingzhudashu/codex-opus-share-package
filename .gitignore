@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+opus-config.json
+opus-key.env
+*.local.json
+*.local.env
+.DS_Store
