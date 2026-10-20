@@ -1,6 +1,8 @@
 import json
 import math
 import os
+import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,9 @@ PROCESS_TERMINATION_RESERVE_SECONDS = 15
 OPERATION_TTL_SECONDS = 3600
 MAX_RETAINED_OPERATIONS = 64
 MAX_PROJECT_ROOT_LENGTH = 4096
+MAX_TASK_LENGTH = 12000
+MAX_CONTEXT_LENGTH = 24000
+CLAUDE_CODE_PATH_ENV = "CLAUDE_CODE_PATH"
 
 _executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_CALLS)
 _operations = {}
@@ -61,6 +66,47 @@ def _validate_project_root(project_root):
     if not os.path.isdir(resolved):
         return None, "project_root 不是存在的目录。"
     return resolved, None
+
+
+def _resolve_claude_executable():
+    """Find Claude Code without requiring one machine-specific install path."""
+    candidates = []
+    configured = os.environ.get(CLAUDE_CODE_PATH_ENV, "").strip()
+    if configured:
+        configured_path = os.path.expandvars(os.path.expanduser(configured))
+        if not os.path.isabs(configured_path):
+            raise RuntimeError(f"{CLAUDE_CODE_PATH_ENV} must be an absolute executable path")
+        if os.name == "nt" and os.path.splitext(configured_path)[1].lower() not in {".exe", ".com"}:
+            raise RuntimeError(f"{CLAUDE_CODE_PATH_ENV} must point to a native .exe or .com executable")
+        if not os.path.isfile(configured_path):
+            raise RuntimeError(f"configured {CLAUDE_CODE_PATH_ENV} executable was not found")
+        return os.path.realpath(configured_path)
+    on_path = shutil.which("claude.exe") if os.name == "nt" else None
+    if not on_path:
+        on_path = shutil.which("claude")
+    if on_path:
+        candidates.append(on_path)
+    if os.name == "nt":
+        candidates.extend(
+            [
+                os.path.expandvars(
+                    r"%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
+                ),
+                os.path.expandvars(
+                    r"%LOCALAPPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
+                ),
+            ]
+        )
+    seen = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.name == "nt" and os.path.splitext(candidate)[1].lower() not in {".exe", ".com"}:
+            continue
+        if os.path.isfile(candidate):
+            return os.path.realpath(candidate)
+    return None
 
 
 def _build_prompt(name, task, context, project_root):
@@ -155,9 +201,12 @@ def _terminate_process_tree(proc):
             pass
     else:
         try:
-            proc.kill()
-        except OSError:
-            pass
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (AttributeError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
     try:
         proc.wait(timeout=5)
     except (OSError, subprocess.TimeoutExpired):
@@ -266,14 +315,21 @@ def _run_claude(name, arguments):
     project_root, project_error = _validate_project_root(arguments.get("project_root", ""))
     if not task:
         raise ValueError("task is required")
+    if len(task) > MAX_TASK_LENGTH:
+        raise ValueError(f"task must be at most {MAX_TASK_LENGTH} characters")
+    if len(context) > MAX_CONTEXT_LENGTH:
+        raise ValueError(f"context must be at most {MAX_CONTEXT_LENGTH} characters")
     if effort not in {"medium", "high", "max"}:
         raise ValueError("effort must be medium, high, or max")
     if project_error:
         raise ValueError(project_error)
     prompt = _build_prompt(name, task, context, project_root)
-    claude_exe = os.path.expandvars(r"%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe")
-    if not os.path.exists(claude_exe):
-        raise RuntimeError("Claude Code executable is not installed at the configured location")
+    claude_exe = _resolve_claude_executable()
+    if not claude_exe:
+        raise RuntimeError(
+            "Claude Code executable was not found; install it, put claude on PATH, "
+            f"or set {CLAUDE_CODE_PATH_ENV} to its absolute path"
+        )
     cmd = _build_claude_command(claude_exe, name, effort, prompt, project_root)
     deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS
     payload = None
@@ -291,6 +347,7 @@ def _run_claude(name, arguments):
                 stdin=subprocess.DEVNULL,
                 stdout=stdout_file,
                 stderr=stderr_file,
+                start_new_session=(os.name != "nt"),
             )
             remaining = deadline - time.monotonic()
             timeout = min(
@@ -342,6 +399,11 @@ def _run_claude(name, arguments):
     result = payload.get("result", "")
     if not isinstance(result, str) or not result.strip():
         raise RuntimeError("claude returned empty result")
+    stop_reason = payload.get("stop_reason", payload.get("terminal_reason"))
+    if isinstance(stop_reason, str) and stop_reason.strip().lower() == "max_tokens":
+        raise RuntimeError("claude response was truncated at the output token limit")
+    if payload.get("truncated") is True or payload.get("is_truncated") is True:
+        raise RuntimeError("claude response was marked as truncated")
     model_usage = payload.get("modelUsage") or {}
     declared_model = payload.get("model") or next(iter(model_usage), None)
     return {
@@ -350,7 +412,7 @@ def _run_claude(name, arguments):
             "requested_model": "claude-opus-5-5",
             "model": declared_model or "model not reported",
             "requested_effort": effort,
-            "stop_reason": payload.get("stop_reason", payload.get("terminal_reason")),
+            "stop_reason": stop_reason,
             "duration_ms": payload.get("duration_ms"),
             "result": result,
         },
@@ -446,6 +508,11 @@ def call_tool(name, arguments):
     task = str(arguments.get("task", "")).strip()
     if not task:
         raise ValueError("task is required")
+    if len(task) > MAX_TASK_LENGTH:
+        raise ValueError(f"task must be at most {MAX_TASK_LENGTH} characters")
+    context = str(arguments.get("context", "")).strip()
+    if len(context) > MAX_CONTEXT_LENGTH:
+        raise ValueError(f"context must be at most {MAX_CONTEXT_LENGTH} characters")
     effort = str(arguments.get("effort", "medium")).strip().lower()
     if effort not in {"medium", "high", "max"}:
         raise ValueError("effort must be medium, high, or max")
@@ -500,12 +567,17 @@ def _handle_request(request):
         common_schema = {
             "type": "object",
             "properties": {
-                "task": {"type": "string"},
+                "task": {"type": "string", "maxLength": MAX_TASK_LENGTH},
                 "project_root": {
                     "type": "string",
+                    "maxLength": MAX_PROJECT_ROOT_LENGTH,
                     "description": "必填的当前任务项目仓库绝对路径。Claude Code 将以该目录为工作区，只读访问此目录及子目录，不会根据桥接进程当前目录猜测项目。",
                 },
-                "context": {"type": "string", "description": "可选的任务专属约束、复现信息和调用方已知事实；无需复制仓库内容。"},
+                "context": {
+                    "type": "string",
+                    "maxLength": MAX_CONTEXT_LENGTH,
+                    "description": "可选的任务专属约束、复现信息和调用方已知事实；无需复制仓库内容。",
+                },
                 "effort": {
                     "type": "string",
                     "enum": ["medium", "high", "max"],

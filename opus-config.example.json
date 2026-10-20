@@ -1,5 +1,5 @@
 {
-  "template_version": 2,
+  "template_version": 3,
   "base_url": "<FILL_YOUR_HTTPS_API_BASE_URL>",
   "api_protocol": "anthropic_messages",
   "model": "claude-opus-5-5",
@@ -8,10 +8,17 @@
   "auth_prefix": "",
   "anthropic_version": "2023-06-01",
   "effort": {
-    "default": "medium",
-    "standard": "high",
+    "simple": "medium",
+    "general": "high",
     "complex": "max",
     "aesthetic": "max"
+  },
+  "effort_policy": {
+    "max_is_preferred_not_required": true,
+    "fallback_order": ["max", "high", "medium"],
+    "fallback_only_on_confirmed_unsupported_tier": true,
+    "accept_non_max_when_complete_and_meets_acceptance": true,
+    "never_replay_after_uncertain_outcome": true
   },
   "max_output_tokens": 32768,
   "request_timeout_seconds": 90,
